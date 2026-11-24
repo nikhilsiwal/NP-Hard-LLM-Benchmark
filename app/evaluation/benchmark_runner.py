@@ -27,13 +27,16 @@ def run_benchmark(
 
     latency = time.time() - start_time
 
-    # Step 3: Parse response
+    # Step 3: Read token usage if provider supports it
+    tokens_used = getattr(provider, "total_tokens", None)
+
+    # Step 4: Parse response
     solution = parse_llm_response(response)
 
-    # Step 4: Validate solution
+    # Step 5: Validate solution
     is_valid, validation_result = validator(solution)
 
-    # Step 5: Calculate metrics
+    # Step 6: Calculate metrics
     llm_value = validation_result if is_valid else None
 
     metrics = evaluate_metrics(
@@ -41,10 +44,11 @@ def run_benchmark(
         llm_value=llm_value,
         optimal_value=optimal_value,
         objective=objective,
-        latency=round(latency, 4)
+        latency=round(latency, 4),
+        tokens_used=tokens_used
     )
 
-    # Step 6: Save experiment
+    # Step 7: Save experiment
     experiment_id = save_experiment(
         problem_name=problem_name,
         provider=provider_name,

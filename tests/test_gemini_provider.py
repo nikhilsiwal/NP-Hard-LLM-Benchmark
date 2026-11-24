@@ -5,6 +5,30 @@ from unittest.mock import Mock
 import app.llm.llm_interface as llm_module
 
 
+def create_fake_response(response_text, usage_metadata=None):
+
+    fake_response = Mock()
+
+    response_data = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"text": response_text}
+                    ]
+                }
+            }
+        ]
+    }
+
+    if usage_metadata is not None:
+        response_data["usageMetadata"] = usage_metadata
+
+    fake_response.json.return_value = response_data
+
+    return fake_response
+
+
 def test_gemini_provider_creation():
 
     provider = llm_module.GeminiLLMProvider(api_key="test-key")
@@ -39,19 +63,9 @@ def test_gemini_provider_empty_prompt():
 
 def test_gemini_provider_generates_response(monkeypatch):
 
-    fake_response = Mock()
-
-    fake_response.json.return_value = {
-        "candidates": [
-            {
-                "content": {
-                    "parts": [
-                        {"text": '{"solution": [1, 0, 1]}'}
-                    ]
-                }
-            }
-        ]
-    }
+    fake_response = create_fake_response(
+        '{"solution": [1, 0, 1]}'
+    )
 
     monkeypatch.setattr(
         llm_module.requests,
@@ -71,19 +85,10 @@ def test_gemini_provider_uses_correct_model(monkeypatch):
     captured = {}
 
     def fake_post(url, **kwargs):
+
         captured["url"] = url
 
-        response = Mock()
-        response.json.return_value = {
-            "candidates": [
-                {
-                    "content": {
-                        "parts": [{"text": "Test response"}]
-                    }
-                }
-            ]
-        }
-        return response
+        return create_fake_response("Test response")
 
     monkeypatch.setattr(llm_module.requests, "post", fake_post)
 
@@ -113,3 +118,49 @@ def test_gemini_provider_empty_response(monkeypatch):
     with pytest.raises(ValueError):
         provider.generate_response("Test prompt")
 
+
+def test_gemini_provider_extracts_token_usage(monkeypatch):
+
+    fake_response = create_fake_response(
+        '{"solution": [1, 0, 1]}',
+        {
+            "promptTokenCount": 100,
+            "candidatesTokenCount": 50,
+            "totalTokenCount": 150
+        }
+    )
+
+    monkeypatch.setattr(
+        llm_module.requests,
+        "post",
+        lambda *args, **kwargs: fake_response
+    )
+
+    provider = llm_module.GeminiLLMProvider(api_key="test-key")
+
+    provider.generate_response("Solve this problem")
+
+    assert provider.prompt_tokens == 100
+    assert provider.completion_tokens == 50
+    assert provider.total_tokens == 150
+
+
+def test_gemini_provider_handles_missing_token_usage(monkeypatch):
+
+    fake_response = create_fake_response(
+        '{"solution": [1, 0, 1]}'
+    )
+
+    monkeypatch.setattr(
+        llm_module.requests,
+        "post",
+        lambda *args, **kwargs: fake_response
+    )
+
+    provider = llm_module.GeminiLLMProvider(api_key="test-key")
+
+    provider.generate_response("Solve this problem")
+
+    assert provider.prompt_tokens is None
+    assert provider.completion_tokens is None
+    assert provider.total_tokens is None
