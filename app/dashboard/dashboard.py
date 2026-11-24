@@ -1,5 +1,6 @@
 
 import sys
+import json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -12,17 +13,20 @@ import plotly.express as px
 from app.database.experiment_db import get_all_experiments
 
 
-# Page setup
+# PAGE CONFIGURATION
+
 st.set_page_config(
     page_title="NP-Hard LLM Benchmark",
     page_icon="🧠",
     layout="wide"
 )
 
-st.title("🧠 NP-Hard Problem with LLM Benchmarking")
-st.caption("AI-powered performance evaluation of NP-hard problems")
+st.title("NP-Hard Problem with LLM Benchmarking")
+st.caption("Advanced AI-powered performance evaluation")
 
-# Load data
+
+# LOAD DATA
+
 experiments = get_all_experiments()
 
 if not experiments:
@@ -31,20 +35,24 @@ if not experiments:
 
 df = pd.DataFrame(experiments)
 
-gemini_df = df[df["provider"] == "gemini"].copy()
+# Convert mixed solution lists into JSON strings.
+# This prevents Streamlit Arrow serialization errors.
+if "solution" in df.columns:
+    df["solution"] = df["solution"].apply(
+        lambda value: json.dumps(value)
+        if isinstance(value, (list, dict))
+        else str(value)
+    )
 
-if gemini_df.empty:
-    st.warning("No Gemini experiments found.")
-    st.stop()
+if "tokens_used" not in df.columns:
+    df["tokens_used"] = None
 
-# Latest experiment for each problem
-latest_df = (
-    gemini_df.sort_values("id")
-    .drop_duplicates("problem_name", keep="last")
-    .copy()
-)
+for column in ["tokens_used", "latency", "accuracy", "optimality_gap"]:
+    df[column] = pd.to_numeric(df[column], errors="coerce")
 
-# Readable names
+
+# PROBLEM NAMES
+
 problem_names = {
     "tsp": "Travelling Salesman",
     "knapsack": "0/1 Knapsack",
@@ -53,49 +61,76 @@ problem_names = {
     "subset_sum": "Subset Sum"
 }
 
-latest_df["display_name"] = latest_df["problem_name"].map(
+df["display_name"] = df["problem_name"].map(
     lambda x: problem_names.get(x, x)
 )
 
-# Sidebar
-st.sidebar.title("⚙️ Dashboard Controls")
 
-available_problems = latest_df["display_name"].tolist()
+# SIDEBAR FILTERS
+
+st.sidebar.title("Dashboard Controls")
+
+available_providers = sorted(
+    df["provider"].dropna().unique().tolist()
+)
+
+available_problems = sorted(
+    df["display_name"].dropna().unique().tolist()
+)
+
+selected_providers = st.sidebar.multiselect(
+    "Select LLM Providers",
+    options=available_providers,
+    default=available_providers
+)
 
 selected_problems = st.sidebar.multiselect(
-    "Select Problems",
+    "Select NP-Hard Problems",
     options=available_problems,
     default=available_problems
 )
 
-if st.sidebar.button("🔄 Refresh Dashboard"):
+if st.sidebar.button("Refresh Dashboard"):
     st.rerun()
 
-filtered_df = latest_df[
-    latest_df["display_name"].isin(selected_problems)
+
+filtered_df = df[
+    df["provider"].isin(selected_providers)
+    & df["display_name"].isin(selected_problems)
 ].copy()
 
 if filtered_df.empty:
-    st.info("Select at least one problem from the sidebar.")
+    st.info("Select at least one provider and problem.")
     st.stop()
 
-# Overview
-st.header("📊 Performance Overview")
+
+# LATEST EXPERIMENT PER PROVIDER AND PROBLEM
+
+latest_df = (
+    filtered_df.sort_values("id")
+    .drop_duplicates(
+        subset=["problem_name", "provider"],
+        keep="last"
+    )
+    .copy()
+)
+
+
+# PERFORMANCE OVERVIEW
+
+st.header("Performance Overview")
 
 col1, col2, col3, col4 = st.columns(4)
 
-col1.metric(
-    "Problems Benchmarked",
-    filtered_df["problem_name"].nunique()
-)
+col1.metric("Experiments", len(filtered_df))
 
 col2.metric(
     "Valid Solutions",
-    int(filtered_df["validity"].sum())
+    int(filtered_df["validity"].fillna(0).sum())
 )
 
 col3.metric(
-    "Average Exact-Match Accuracy",
+    "Average Accuracy",
     f"{filtered_df['accuracy'].mean() * 100:.1f}%"
 )
 
@@ -106,123 +141,193 @@ col4.metric(
 
 st.divider()
 
-# Latest results
-st.header("📋 Latest Gemini Results")
 
-display_df = filtered_df[
+# TOKEN USAGE
+
+st.header("Token Usage Analysis")
+
+token_df = filtered_df.dropna(
+    subset=["tokens_used"]
+).copy()
+
+token_col1, token_col2, token_col3 = st.columns(3)
+
+if not token_df.empty:
+
+    token_col1.metric(
+        "Total Tokens Used",
+        f"{int(token_df['tokens_used'].sum()):,}"
+    )
+
+    token_col2.metric(
+        "Average Tokens",
+        f"{token_df['tokens_used'].mean():.1f}"
+    )
+
+    token_col3.metric(
+        "Experiments with Token Data",
+        len(token_df)
+    )
+
+    fig_tokens = px.bar(
+        token_df,
+        x="display_name",
+        y="tokens_used",
+        color="provider",
+        barmode="group",
+        text="tokens_used",
+        title="Token Usage by Problem and Provider"
+    )
+
+    st.plotly_chart(fig_tokens, width="stretch")
+
+else:
+
+    token_col1.metric("Total Tokens Used", "N/A")
+    token_col2.metric("Average Tokens", "N/A")
+    token_col3.metric("Experiments with Token Data", 0)
+
+    st.info("Token usage data is not available yet.")
+
+st.divider()
+
+
+# LATEST RESULTS
+
+st.header("Latest Benchmark Results")
+
+display_df = latest_df[
     [
         "display_name",
+        "provider",
         "solution",
         "validity",
         "accuracy",
         "optimality_gap",
         "latency",
+        "tokens_used",
         "id"
     ]
 ].copy()
 
 display_df.columns = [
     "Problem",
-    "Gemini Solution",
+    "Provider",
+    "Solution",
     "Valid",
-    "Exact-Match Accuracy",
+    "Accuracy",
     "Optimality Gap (%)",
     "Latency (seconds)",
+    "Tokens Used",
     "Experiment ID"
 ]
 
 st.dataframe(
     display_df,
-    use_container_width=True,
+    width="stretch",
     hide_index=True
 )
 
 st.divider()
 
-# Accuracy chart
-st.header("📈 Accuracy Comparison")
 
-accuracy_df = filtered_df.copy()
-accuracy_df["accuracy_percent"] = accuracy_df["accuracy"] * 100
+# ACCURACY COMPARISON
+
+st.header("Accuracy Comparison")
+
+accuracy_df = latest_df.copy()
+accuracy_df["accuracy_percent"] = (
+    accuracy_df["accuracy"] * 100
+)
 
 fig_accuracy = px.bar(
     accuracy_df,
     x="display_name",
     y="accuracy_percent",
-    color="display_name",
+    color="provider",
+    barmode="group",
     text="accuracy_percent",
-    title="Exact-Match Accuracy by Problem",
+    title="Exact-Match Accuracy by Provider",
     labels={
         "display_name": "NP-Hard Problem",
-        "accuracy_percent": "Accuracy (%)"
+        "accuracy_percent": "Accuracy (%)",
+        "provider": "LLM Provider"
     }
 )
 
-fig_accuracy.update_layout(
-    yaxis_range=[0, 100],
-    showlegend=False
-)
+fig_accuracy.update_layout(yaxis_range=[0, 100])
 
-st.plotly_chart(fig_accuracy, use_container_width=True)
+st.plotly_chart(fig_accuracy, width="stretch")
 
-# Latency chart
-st.header("⏱️ Response Time Comparison")
+
+# LATENCY COMPARISON
+
+st.header("Response Time Comparison")
 
 fig_latency = px.bar(
-    filtered_df,
+    latest_df,
     x="display_name",
     y="latency",
-    color="display_name",
+    color="provider",
+    barmode="group",
     text="latency",
-    title="Gemini Response Time",
-    labels={
-        "display_name": "NP-Hard Problem",
-        "latency": "Latency (seconds)"
-    }
+    title="Response Latency by Provider"
 )
 
-fig_latency.update_layout(showlegend=False)
+st.plotly_chart(fig_latency, width="stretch")
 
-st.plotly_chart(fig_latency, use_container_width=True)
 
-# Optimality gap
-st.header("🎯 Optimality Gap Comparison")
+# OPTIMALITY GAP
 
-gap_df = filtered_df.dropna(subset=["optimality_gap"])
+st.header("Optimality Gap Analysis")
 
-fig_gap = px.bar(
-    gap_df,
-    x="display_name",
-    y="optimality_gap",
-    color="display_name",
-    text="optimality_gap",
-    title="Optimality Gap by Problem",
-    labels={
-        "display_name": "NP-Hard Problem",
-        "optimality_gap": "Optimality Gap (%)"
-    }
+gap_df = latest_df.dropna(
+    subset=["optimality_gap"]
 )
 
-fig_gap.update_layout(showlegend=False)
+if not gap_df.empty:
 
-st.plotly_chart(fig_gap, use_container_width=True)
+    fig_gap = px.bar(
+        gap_df,
+        x="display_name",
+        y="optimality_gap",
+        color="provider",
+        barmode="group",
+        text="optimality_gap",
+        title="Optimality Gap by Provider"
+    )
+
+    st.plotly_chart(fig_gap, width="stretch")
+
+else:
+    st.info("No optimality gap data available.")
 
 st.divider()
 
-# Experiment history
-st.header("🗂️ Experiment History")
 
-history_df = df.sort_values("id", ascending=False).copy()
+# COMPLETE EXPERIMENT HISTORY
+
+st.header("Complete Experiment History")
+
+history_df = filtered_df.sort_values(
+    "id",
+    ascending=False
+)
 
 st.dataframe(
     history_df,
-    use_container_width=True,
+    width="stretch",
     hide_index=True
 )
 
-st.caption(
-    "Note: Exact-match accuracy measures whether the objective value "
-    "matches the reference optimum. A valid near-optimal solution "
-    "may still have 0% exact-match accuracy."
-)
 
+# FOOTER
+
+st.divider()
+
+st.caption(
+    "Exact-match accuracy measures whether the objective value "
+    "matches the reference optimum. A valid near-optimal solution "
+    "may still have 0% exact-match accuracy. Missing token data "
+    "is displayed as unavailable, not as zero."
+)
