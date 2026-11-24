@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.express as px
 
 from app.database.experiment_db import get_all_experiments
+from app.evaluation.custom_benchmark import run_custom_benchmark
 
 
 # PAGE CONFIGURATION
@@ -25,12 +26,88 @@ st.title("NP-Hard Problem with LLM Benchmarking")
 st.caption("Advanced AI-powered performance evaluation")
 
 
+# CUSTOM BENCHMARK INPUT
+
+st.header("Custom Problem Benchmark")
+st.caption("Enter your own problem instance and compare Gemini or Groq against the exact solver.")
+
+with st.expander("Open Custom Benchmark", expanded=True):
+    custom_problem = st.selectbox(
+        "Select Problem",
+        ["Travelling Salesman (TSP)", "0/1 Knapsack", "Graph Coloring"],
+        key="custom_problem_type",
+    )
+    custom_provider = st.selectbox(
+        "Select LLM Provider", ["Gemini", "Groq"], key="custom_provider"
+    )
+
+    if custom_problem.startswith("Travelling"):
+        st.write("Enter cities as JSON. Each city needs x and y coordinates.")
+        raw_instance = st.text_area(
+            "Cities JSON",
+            value='''[\n  {\"x\": 0, \"y\": 0},\n  {\"x\": 3, \"y\": 4},\n  {\"x\": 6, \"y\": 0},\n  {\"x\": 2, \"y\": 7}\n]''',
+            height=150,
+            key="custom_tsp_json",
+        )
+        custom_instance_type = "tsp"
+    elif custom_problem.startswith("0/1"):
+        capacity = st.number_input("Knapsack Capacity", min_value=0, value=10, step=1)
+        st.write("Enter items as JSON. Each item needs weight and value.")
+        raw_instance = st.text_area(
+            "Items JSON",
+            value='''[\n  {\"weight\": 2, \"value\": 30},\n  {\"weight\": 4, \"value\": 50},\n  {\"weight\": 5, \"value\": 60},\n  {\"weight\": 3, \"value\": 40}\n]''',
+            height=150,
+            key="custom_knapsack_json",
+        )
+        custom_instance_type = "knapsack"
+    else:
+        num_vertices = st.number_input("Number of Vertices", min_value=1, max_value=8, value=4, step=1)
+        st.write("Enter edges as pairs of vertex indices, e.g. [[0, 1], [1, 2]].")
+        raw_instance = st.text_area(
+            "Edges JSON",
+            value="[[0, 1], [1, 2], [2, 3], [3, 0], [0, 2]]",
+            height=120,
+            key="custom_graph_json",
+        )
+        custom_instance_type = "graph_coloring"
+
+    if st.button("Run Custom Benchmark", type="primary", key="run_custom_benchmark"):
+        try:
+            parsed = json.loads(raw_instance)
+            if custom_instance_type == "tsp":
+                custom_instance = {"cities": parsed}
+            elif custom_instance_type == "knapsack":
+                custom_instance = {"items": parsed, "capacity": int(capacity)}
+            else:
+                custom_instance = {"num_vertices": int(num_vertices), "edges": parsed}
+
+            with st.spinner(f"Running {custom_problem} benchmark with {custom_provider}..."):
+                custom_result = run_custom_benchmark(
+                    custom_instance_type, custom_instance, custom_provider.lower()
+                )
+
+            st.success(f"Benchmark saved! Experiment ID: {custom_result['experiment_id']}")
+            st.subheader("Custom Benchmark Result")
+            result_col1, result_col2, result_col3 = st.columns(3)
+            result_col1.metric("Valid Solution", "Yes" if custom_result["validity"] else "No")
+            result_col2.metric("Exact Solver Value", str(custom_result["exact_value"]))
+            result_col3.metric("LLM Value", str(custom_result["validation_result"]))
+            st.write("**Exact Solver Solution:**", custom_result["exact_solution"])
+            st.write("**LLM Solution:**", custom_result["solution"])
+            st.write("**Metrics:**", custom_result["metrics"])
+        except json.JSONDecodeError as error:
+            st.error(f"Invalid JSON input: {error}")
+        except Exception as error:
+            st.error(f"Custom benchmark failed: {error}")
+
+st.divider()
+
 # LOAD DATA
 
 experiments = get_all_experiments()
 
 if not experiments:
-    st.warning("No experiments found.")
+    st.info("No saved experiments yet. Run a Custom Benchmark above to create your first result.")
     st.stop()
 
 df = pd.DataFrame(experiments)
