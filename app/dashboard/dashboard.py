@@ -29,7 +29,7 @@ st.caption("Advanced AI-powered performance evaluation")
 # CUSTOM BENCHMARK INPUT
 
 st.header("Custom Problem Benchmark")
-st.caption("Enter your own problem instance and compare Gemini or Groq against the exact solver.")
+st.caption("Enter up to 50 cities, items, or vertices. Larger TSP and Graph Coloring references use heuristics; Knapsack uses exact dynamic programming.")
 
 with st.expander("Open Custom Benchmark", expanded=True):
     custom_problem = st.selectbox(
@@ -61,7 +61,7 @@ with st.expander("Open Custom Benchmark", expanded=True):
         )
         custom_instance_type = "knapsack"
     else:
-        num_vertices = st.number_input("Number of Vertices", min_value=1, max_value=8, value=4, step=1)
+        num_vertices = st.number_input("Number of Vertices", min_value=1, max_value=50, value=4, step=1)
         st.write("Enter edges as pairs of vertex indices, e.g. [[0, 1], [1, 2]].")
         raw_instance = st.text_area(
             "Edges JSON",
@@ -90,9 +90,10 @@ with st.expander("Open Custom Benchmark", expanded=True):
             st.subheader("Custom Benchmark Result")
             result_col1, result_col2, result_col3 = st.columns(3)
             result_col1.metric("Valid Solution", "Yes" if custom_result["validity"] else "No")
-            result_col2.metric("Exact Solver Value", str(custom_result["exact_value"]))
+            result_col2.metric("Reference Value", str(custom_result["exact_value"]))
             result_col3.metric("LLM Value", str(custom_result["validation_result"]))
-            st.write("**Exact Solver Solution:**", custom_result["exact_solution"])
+            st.write("**Reference Type:**", custom_result.get("reference_type", "exact"))
+            st.write("**Reference Solution:**", custom_result["exact_solution"])
             st.write("**LLM Solution:**", custom_result["solution"])
             st.write("**Metrics:**", custom_result["metrics"])
         except json.JSONDecodeError as error:
